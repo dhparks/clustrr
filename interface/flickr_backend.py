@@ -8,7 +8,7 @@ DEBUG = False
 if not DEBUG:
     from flickrapi import FlickrAPI
     from . import flickr_help as fh
-    
+
 from . import api_keys as ak
 from . import tag_classes as tc
 from . import som_classes as sc
@@ -17,9 +17,10 @@ import numpy as np
 import math
 from PIL import Image
 import os
+import time
 
 class Backend(object):
-    
+
     """ This class defines an api that the gui can talk to through the browser,
     interfacing between the browser commands and the database commands
     in tag_classes and the analytical routines in som_classes.
@@ -27,7 +28,7 @@ class Backend(object):
     Most functions in this class get called in an indirect fashion.
     The server file calls backend.cmds[cmd](*args). Cmds is a dictionary
     linking browswer command requests to functions in this class. """
-
+    
     def __init__(self):
 
         # start flickr sessions. flickrQ takes care of requests
@@ -37,12 +38,13 @@ class Backend(object):
 
         # database information
         self.db_root = 'data'
+        self.db_path = None
 
-        # data storage objects
-        self.cloud = tc.tag_cloud()
+        # data storage object
+        self.cloud = tc.TagCloud()
         
         self.nsid = None
-        self.username = None
+        self.uname = None
         
         # link commands in frontend to commands here in backend
         self.cmds = {'getuser':self._user,
@@ -58,8 +60,8 @@ class Backend(object):
         self.success = {'status':'ok'}
 
         # other data structures to be populated later
-        self.graph = tc.tag_graph()
-        self.matrix = tc.tag_matrix()
+        self.graph = tc.TagGraph()
+        self.matrix = tc.TagMatrix()
         self.som = sc.MultiSOM((15, 15))
         
         # for file saving
@@ -73,7 +75,7 @@ class Backend(object):
         """ Get the user id from the flickr url of form
         http://flickr.com/photos/$username
         This sets the userid for the rest of the backend.
-        
+
         requires: url
         """
 
@@ -81,12 +83,9 @@ class Backend(object):
         if not DEBUG:
             self.nsid, self.uname = self.flickrq.user_from_url(url)
         else:
-            self.nsid = '59378287@N03'
-            self.uname = 'safanda'
-            #self.nsid = ak.flickr_me
-            #self.uname = 'D. H. Parks'
-            
-            
+            self.nsid = ak.flickr_me
+            self.uname = 'D. H. Parks'
+
         self.db_path = os.path.join(self.db_root, self.nsid)
         try:
             os.makedirs(self.db_path)
@@ -125,7 +124,7 @@ class Backend(object):
             pass
         
         # connect or create using the usual tag schema.
-        # see tag_classes.tag_cloud for details
+        # see tag_classes.TagCloud for details
         self.cloud.connect(os.path.join(self.db_path, '%s.db'%self.nsid))
         self.cloud.add_tables()
        
@@ -144,8 +143,12 @@ class Backend(object):
                 start = '2013-01-01'
                 end = '2013-01-30'
                 have_days = self.cloud.all_dates()
-                
-                for yielded in self.flickrq.explore_photos(fields=fields, extras=extras, start=start, end=end, have_days=have_days):
+
+                for yielded in self.flickrq.explore_photos(fields=fields,
+                                                           extras=extras,
+                                                           start=start,
+                                                           end=end,
+                                                           have_days=have_days):
                     self.cloud.add_photos(yielded)
 
             except fh.FlickrError as err:
@@ -172,18 +175,21 @@ class Backend(object):
                     # add new information to database
                     fields = self.cloud.post_fields
                     extras = ','.join(fields)
-                    photos = self.flickrq.user_photos(nsid=self.nsid, fields=fields, extras=extras, stop_date=max_date)
+                    photos = self.flickrq.user_photos(nsid=self.nsid,
+                                                      fields=fields,
+                                                      extras=extras,
+                                                      stop_date=max_date)
 
                     self.cloud.add_photos(photos)
                     
                     # remove old analysis
                     import glob
                     max_date = self.cloud.date_min_max()[1]
-                    files_in_directory = glob.glob(os.path.join(self.db_path, '*'))
-                    for fname in files_in_directory:
+                    files_in_dir = glob.glob(os.path.join(self.db_path, '*'))
+                    for fname in files_in_dir:
                         try:
-                            f_max_date = int(fname.split('maxdate_')[1].split('.')[0])
-                            if f_max_date < max_date:
+                            f_max_date = fname.split('maxdate_')[1].split('.')[0]
+                            if int(f_max_date) < max_date:
                                 os.remove(fname)
                             else:
                                 pass
@@ -202,21 +208,21 @@ class Backend(object):
         """ Helper function which tries to load old analysis.
         If the analysis is out of date, calculates new analysis
         and saves it.
-        
+
         fmt: format of old analysis
         fn: filename for new analysis
         load: loading function
         calculate: calculation and save function
         after: things to do after loading/calculating
         """
-        
+
         from glob import glob
-        
+
         fname = fmt.replace('*', '%s')
-        
+
         # get the max_date photo in the database
         max_date = self.cloud.date_min_max()[1]
-       
+
         # find all the old files for this userid
         files = glob(os.path.join(self.db_path, fmt%self.nsid))
         files.sort()
@@ -224,8 +230,8 @@ class Backend(object):
         # check for old work. if it exists, open it. if it is out
         # of date, recalculate it.
         if len(files) > 0:
-            file_date = float(files[-1].split('maxdate_')[1].split(fmt.split('.')[-1])[0])
-            if file_date == max_date:
+            file_date = files[-1].split('maxdate_')[1].split(fmt.split('.')[-1])[0]
+            if float(file_date) == max_date:
                 load(files[-1])
             else:
                 calculate(os.path.join(self.db_path, fname%(self.nsid, max_date)))
@@ -246,6 +252,8 @@ class Backend(object):
                 self.special_name_explore()
             else:
                 self.get_uid('http://flickr.com/photos/%s'%form['name'])
+                
+            # once we find the user, we should 
             return {'status':'ok', 'nsid':self.nsid}
         except fh.FlickrError as err:
             return {'status':'fail', 'message':err.args[0]['message']}
@@ -279,8 +287,11 @@ class Backend(object):
         
         import json as j
         
+        print("centralities")
+        
         def _calculate(fname):
             """ Calculation/saving helper """
+            print(fname)
             self.centralities = {str(key):self.graph.calculate_centralities(val)
                                  for key, val in self.cluster_members.items()}
             with open(fname, 'w') as where:
@@ -288,6 +299,7 @@ class Backend(object):
         
         def _load(fpath):
             """ Load old results helper """
+            print(fpath)
             with open(fpath, 'r') as where:
                 try:
                     self.centralities = j.load(where)
@@ -304,33 +316,42 @@ class Backend(object):
     def _build_network(self, args, json, form):
         """ Turn the bag of words scraped by _scrape and
         _populate into a networkx graph """
-        
-        
+
         def _calculate(fname):
             """ Calculate/save helper """
-            from networkx import write_gpickle
+            
+            # re-instantiate the graph object to avoid
+            # contamination between userids
+            self.graph = tc.TagGraph()
             self.graph.source = self.cloud
+            
+            # make the graph
             self.graph.make_from_bags(popular_tags=self.popular_tags,
                                       remove_vision_tags=self.remove_vision_tags)
+            
+            # dump to pickle; faster and smaller than dumping json
+            from networkx import write_gpickle
             write_gpickle(self.graph, fname)
             
         def _load(fpath):
             """ Load old results helper """
             from networkx import read_gpickle
+            t0 = time.time()
             self.graph = read_gpickle(fpath)
-            
+            print(time.time()-t0)
+
         def _after():
             """ Do things afterwards helper """
             self.matrix.source = self.graph
             self.matrix.make_matrix()
-            
+
         #try:
         fmt = 'graph user_%s maxdate_*.pck'
         self._load_old(fmt, _load, _calculate, after=_after)
         return self.success
         #except:
-            #return self.fail
-    
+        #    return self.fail
+
     def _eigenvalues(self, args, json, form):
         """ Calculate eigenvalues of the counts matrix for cluster
         size determination."""
@@ -343,14 +364,19 @@ class Backend(object):
     def _train(self, args, json, form):
         """ Train the self-organizing map many times, then look
         for repeats. """
-        
+
         def _calculate(fname):
             """ Calculate/save helper """
             training_set = self.matrix.fuzzy
-            self.som.graph = self.graph
-            self.som.train(training_set, training_set.shape[0]*5, repeats=32, debug=False)
-            np.savez_compressed(fname, data=self.som.repeats)
             
+            # reset the SOM to avoid user contamination
+            self.som.reset()
+            
+            self.som.graph = self.graph
+            self.som.train(training_set, training_set.shape[0]*5,
+                           repeats=32, debug=False)
+            np.savez_compressed(fname, data=self.som.repeats)
+
         def _load(fname):
             """ Load old results helper """
             self.som.repeats = np.load(fname)['data']
@@ -372,7 +398,7 @@ class Backend(object):
         
         def _calculate1(fname):
             """ Helper: calculate reproducibility """
-            self.som.cluster_reproducibility()#labels=sorted(self.graph.graph.nodes()))
+            self.som.cluster_reproducibility()
             with open(fname, 'w') as where:
                 j.dump(self.som.reproduction_analysis, where)
 
@@ -384,12 +410,12 @@ class Backend(object):
 
         def _calculate2(fname):
             """ Helper: assign prototypes to clusters """
-            self.som.assign_prototypes_knn()#node_labels=sorted(self.graph.graph.nodes()))
+            self.som.assign_prototypes_knn()
             with open(fname, 'w') as where:
                 j.dump({'clusters':self.som.knn_clusters,
                         'borders':self.som.knn_borders,
                         'umatrix':self.som.umatrixlist}, where)
-                
+
         def _calculate3(fname):
             """ Helper: reformat membership for frontend"""
             self.cluster_members = {str(cluster):tags
@@ -397,25 +423,6 @@ class Backend(object):
                                     for cluster, tags in analysis['members'].items()}
             with open(fname, 'w') as where:
                 j.dump(self.cluster_members, where)
-                
-        def _calculate4(fname):
-            """ Helper: calculate modularity of each cluster """
-            
-            # this is where clusters go to which nclusters designation
-            x = {n+1:[str((n**2+n)/2+x) for x in range(n+1)] for n in range(len(self.som.knn_clusters))}
-
-            # now turn this into a list of tags
-            nodes = sorted(self.graph.graph.nodes())
-            for_modularity = {}
-            for y in x:
-                tmp = [self.cluster_members[n] for n in x[y]]
-                for_modularity[y] = tmp
-                
-            self.modularity = self.graph.modularity(for_modularity)
-
-            #with open(fname, 'w') as where:
-            #    j.dump(self.modularity, where)
-            
 
         def _load1(fname):
             """ Helper: load old results""" 
@@ -423,7 +430,7 @@ class Backend(object):
                 self.som.reproduction_analysis = j.load(where)
             loaded = np.load(fname.replace('.json', '.npz'))
             self.som.reproduction_matrices = loaded['data']
-                
+
         def _load2(fname):
             """ Helper: load old results """
             with open(fname, 'r') as where:
@@ -432,39 +439,30 @@ class Backend(object):
                 self.som.knn_borders = loaded['borders']
                 self.som.umatrixlist = loaded['umatrix']
                 self.som.umatrix = np.array(self.som.umatrixlist)
-                
+
         def _load3(fname):
             """ Helper: load old results """
             with open(fname, 'r') as where:
                 self.cluster_members = j.load(where)
-                
-        def _load4(fname):
-            """ Helper: load old results """
-            with open(fname, 'r') as where:
-                self.modularity = j.load(where)
+
 
         #try:
         sequence = [{'fmt':'reproduction %s.json'%self.file_id,
                      'load':_load1,
                      'calc':_calculate1},
-            
+
                     {'fmt':'assignments %s.json'%self.file_id,
                      'load':_load2,
                      'calc':_calculate2},
-                    
+
                     {'fmt':'clustermembers %s.json'%self.file_id,
                      'load':_load3,
                      'calc':_calculate3},
-                    
-                    #{'fmt':'modularities %s.json'%self.file_id,
-                    # 'load':_load4,
-                    # 'calc':_calculate4}]
-                    
                    ]
         
         for seq in sequence:
             self._load_old(seq['fmt'], seq['load'], seq['calc'])
-        
+            
         return self.success
         
         #except:
@@ -472,17 +470,17 @@ class Backend(object):
     
     def _download(self, args, json_in, form):
         
-        #""" Last stage in the analysis: package data and send it back """
+        """ Last stage in the analysis: package data and send it back """
         
-        #try:
-            
+        try:
+
             # assemble data to be downloaded as a dictionary
             to_return = {'status':'ok'}
             
             # for the eigenvalue plot, we just need the eigenvalues.
             # rounding to a specified precision doesn't save much
             # space after compression, so leave at full floating point.
-            eigs = self.matrix.eigs.tolist()[:50]#int(len(self.som.repeats)/8)]
+            eigs = self.matrix.eigs.tolist()[:50]
             to_return['eigenvalues'] = eigs
             
             # for the som map, we need the umatrix, the borders,
@@ -494,17 +492,21 @@ class Backend(object):
             # for the spectral graph, we need to convert to png
             # and supply the url, as well as the number of tags (for scaling)
             max_date = self.cloud.date_min_max()[1]
-            to_return['blockdiagonal'] = [s['sizes'] for s in self.som.reproduction_analysis]
-            to_return['blockdiagonalurl'] = 'static/images/clusters_%s_%s.png'%(self.uname, max_date)
+            sizes = [s['sizes'] for s in self.som.reproduction_analysis]
+            png_name = 'static/images/clusters_%s_%s.png'%(self.uname, max_date)
+            to_return['blockdiagonal'] = sizes
+            to_return['blockdiagonalurl'] = png_name
             to_return['ntags'] = self.graph.graph.number_of_nodes()
-            #if not isfile(to_return['blockdiagonalurl']):
-            self._to_sprite(self.som.reproduction_matrices, to_return['blockdiagonalurl'])
+            self._to_sprite(self.som.reproduction_matrices, png_name)
             
             # stuff for the word cloud
             to_return['tags'] = sorted(self.graph.graph.nodes())
             to_return['members'] = self.cluster_members #11k zipped
             to_return['centralities'] = self.centralities #21k zipped
-            to_return['counts'], to_return['maxCounts'] = self.graph.get_counts(tags=to_return['tags'])
+            
+            counts, max_counts = self.graph.get_counts(tags=to_return['tags'])
+            to_return['counts'] = counts
+            to_return['maxCounts'] = max_counts
             
             # stuff for generating image thumbnails from the wordcloud.
             # need: list of photos each popular tag belong to.
@@ -515,14 +517,15 @@ class Backend(object):
 
             return to_return
             
-        #except:
-        #    return self.fail
+        except:
+            return self.fail
 
     def _to_sprite(self, images, name):
-        """ save the frames of array as a single large image which only requires a single GET
-        request to the webserver. g is the dimensions of the grid in terms of number of images.
-        array can be either a np array, in which case all frames are converted
-        to images, or an iterable of PIL objects """
+        """ Save the frames of array as a single large image which only
+        requires a single GET request to the webserver. g is the dimensions
+        of the grid in terms of number of images. Images can be either a
+        np array, in which case all frames are converted to images, or an
+        iterable of PIL objects """
         
         import scipy.misc as smp
 
@@ -539,10 +542,12 @@ class Backend(object):
 
         imgx, imgy = images[0].size
     
-        # calculate the best row/column division to minimize wasted space. be efficient
-        # with the transmitted bits!
-        grid0 = int(math.floor(math.sqrt(len(images)))+1)
-        g_list = [_gridy_diff(len(images), gridx) for gridx in [grid0+x for x in range(5)]]
+        # calculate the best row/column division to minimize wasted space.
+        # be efficient with the transmitted bits!
+        l_im = len(images)
+        grid0 = int(math.floor(math.sqrt(l_im))+1)
+        grids = [grid0+x for x in range(5)]
+        g_list = [_gridy_diff(l_im, gridx) for gridx in grids]
     
         g_list.sort(key=lambda x: x[2])
         gridx = g_list[0][0]
