@@ -7,7 +7,7 @@
 <!-- get the scripts -->
 <script type="text/javascript" src="static/js/jquery-2.0.3.min.js"></script>
 <script type="text/javascript" src="static/js/d3.v3.min.js"></script>
-<script type="text/javascript" src="static/js/gui-min.js"></script>
+<script type="text/javascript" src="static/js/gui.js"></script>
 <script type="text/javascript" src="static/js/wordcloud.js"></script>
 
 <!-- get the stylesheet -->
@@ -18,9 +18,14 @@
     
     <div id="container">
 	
-	<div id="testing">
+	<div id="header">
+	    <span class="title titlestart" >Clustr</span><span class="title titleend">r</span>
+	    <div id="subtitle">Uncover the Hierarchical Structure within Flickr&trade; Photostreams [<a target="_blank" href="">Learn!</a>]</div>
+	</div>
+	
+	<div id="streamSelector">
 	    <form id="flickruser">
-		Flickr Photostream: flickr.com/photos/<input id="username" type="text" size=10 name="username" placeholder="parksdh">
+		Photostream URL: flickr.com/photos/<input id="username" type="text" size=10 name="username" placeholder="parksdh">
 		<input id="analyze" type="submit" value="Analyze!">
 	    </form>
 	</div>
