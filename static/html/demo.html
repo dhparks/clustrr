@@ -1,0 +1,44 @@
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8"/>
+
+<title>Flickr Data</title>
+
+<!-- get the scripts -->
+<script type="text/javascript" src="static/js/jquery-2.0.3.min.js"></script>
+<script type="text/javascript" src="static/js/d3.v3.min.js"></script>
+<script type="text/javascript" src="static/js/gui-min.js"></script>
+<script type="text/javascript" src="static/js/wordcloud.js"></script>
+
+<!-- get the stylesheet -->
+<link rel="stylesheet" type="text/css" href="static/css/gui.css" />
+
+</head>
+<body>
+    
+    <div id="container">
+	
+	<div id="testing">
+	    <form id="flickruser">
+		Flickr Photostream: flickr.com/photos/<input id="username" type="text" size=10 name="username" placeholder="parksdh">
+		<input id="analyze" type="submit" value="Analyze!">
+	    </form>
+	</div>
+	
+	<div id="progress2">
+	</div>
+	
+	<div id="maps">
+	    <div id="eigenplot"></div>
+	    <div id="som"></div>
+	    <div id="clustergraph"></div>
+	</div>
+	
+	<div id="wordcloud"></div>
+	
+	<div id="photoMatrix"></div>
+	
+    </div>
+    
+</body>
+</html>

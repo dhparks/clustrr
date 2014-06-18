@@ -1,0 +1,192 @@
+html {overflow-y:scroll}
+
+#testing {
+    margin: auto;
+    text-align: center;
+    border: 2px solid black;
+    border-radius: 7px;
+    margin-bottom: 4px;
+    height: 25px;
+    background-color: #7fb4ee;
+    fill-opacity: 0.5;
+}
+
+table {border-spacing:0px}
+
+.clusterOverlay {
+    fill: #006add;
+    stroke: #006add;
+    stroke-width: 0px;}
+    
+.CGunselected {
+    fill-opacity: 0;
+}
+
+.CGselected {
+    fill-opacity: .5;
+}
+
+#analyze {}
+
+#som .border .visible {
+    fill-opacity: 1;
+}
+
+#som .border .invisible {
+    fill-opacity: 0;
+}
+
+#maps {
+    display: inline-block;
+    opacity: 1;}
+
+#eigenplot {
+    float:left;
+    margin-right:2px;
+    margin-bottom:1px;}
+    
+#eigenplot-slider {
+    cursor: ew-resize;
+}
+
+.diagonalCluster {
+    cursor:pointer;
+    stroke-opacity:1;
+    stroke-width:1.5;
+    stroke:#ff1981;
+}
+
+#counter-text {
+    pointer-events:none;
+}
+
+#som {
+    float:left;
+    margin-right:2px;
+    margin-bottom:1px;
+    cursor:pointer}
+    
+#clustergraph {
+    float:left;
+    margin-right:2px;
+    margin-bottom:1px;}
+    
+#container {
+    display:inline-block;
+    left:50%;
+    position: relative;
+    margin:0 0 0 -410px;}
+
+.indicator {
+    height: 10px;
+    width: 10px;
+    border-radius: 10px;
+    border: 1px solid black;
+    margin: 0;
+}
+
+.crhr {
+    background-image:url('../images/hr.png');
+    background-repeat:repeat-x;
+    background-position: 0% 50%;
+    height: 50%;
+}
+
+#progress2 {
+    width: 791px;
+    padding-bottom: 7px;
+    display: none;
+}
+
+#wordcloud {
+    width: 787px;
+    margin: 7px auto 0 auto;
+    border: 2px solid black;
+    border-radius: 8px;
+    opacity: 0;
+}
+
+#wordcloud text .selected{
+}
+
+#wordcloud text {
+    cursor: pointer;
+    -webkit-user-select: none;  /* Chrome all / Safari all */
+    -moz-user-select: none;     /* Firefox all */
+    -ms-user-select: none;      /* IE 10+ */
+}
+
+#progress2 table {
+    width: 100%;
+}
+
+.textrow td {
+    width: 12.5%;
+    text-align: center;
+    font-size: 12px;
+}
+
+.circlerow td {
+    padding: 0;
+    text-align: center;
+    margin: auto;
+}
+
+.gridlines {	
+    fill: none;
+    stroke: black;
+    stroke-width: 1px;
+    stroke-opacity: 0.2;
+}
+
+.plotaxis {
+    font-size: 12px;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    user-select: none;
+    }
+    
+.plotaxis path,
+.plotaxis line {
+    fill: none;
+    stroke: #000;
+    shape-rendering: crispEdges;
+}
+
+#photoMatrix{
+    height:450px;
+    margin-top: 7px;
+    text-align:center;
+}
+
+#photoMatrix div {
+    display:block;
+    
+}
+
+.thumbnail_row {
+    margin: 0 auto;
+}
+
+.thumbnail_element {
+    float:left;
+    margin:0 auto;
+    padding: 1px;
+}
+
+#scrollarrows {margin-top: 3px;}
+
+#scrollarrows img {
+    width: 30px;
+    height: 30px;
+}
+
+.scrollactive {
+    opacity: 1;
+    cursor: pointer;
+}
+
+.scrollinactive {
+    opacity: 0;
+}
+    
