@@ -38,6 +38,7 @@ def find_winners_mp(args):
     # return: [(coords,label),(coords,label)]
     
     def main(entries, weights, grid):
+        """ Find the winners """
         winners = []
         for label, sample in entries:
             distances = np.sum((weights-sample)**2, axis=-1)
@@ -52,13 +53,17 @@ def find_winner_mp_sparse(args):
     For sparse vectors. """
     
     def main(sample, weight, grid):
+        """ Find the winners """
         distances = np.sum((weight-sample)**2, axis=-1)
         return np.unravel_index(distances.argmin(), grid)
     return main(*args)
 
 def _train_mp(args):
     
+    """ Train a SOM several times; structured for multiprocessing"""
+    
     def _main(grid_size, repeats, samples, iterations, params, graph):
+        """ Helper function which actually trains the SOM """
         
         # instantiate the SOM for this CPU
         som = SOM(grid_size)
@@ -71,9 +76,11 @@ def _train_mp(args):
             fmt = np.int32
             
         # hashed nodes for fast lookup
-        nodes = {x:i for i,x in enumerate(sorted(graph.graph.nodes()))}
+        nodes = {x:i for i, x in enumerate(sorted(graph.graph.nodes()))}
 
         for repeat in range(repeats):
+            
+            print(repeat)
 
             # train, agglomerate, assign
             som.train(samples, iterations, params=params)
@@ -85,8 +92,6 @@ def _train_mp(args):
             for number, clusters in som.agglomerator.cluster_tracker.items():
                 # number is the number of clusters
                 # clusters is a list/set of clusters
-                # fancy indexing makes the update much faster than
-                # iterating: inner loop is moved to numpy/c
                 for cluster in clusters:
                     tags = [nodes[x] for x in som.agglomerator.clusters[cluster].tags]
                     for tag in tags:
@@ -114,7 +119,7 @@ class Cluster(object):
         self.tag_members = []
         self.u_average = 0
         
-    def add_coordinate(self, coord):
+    def add_coord(self, coord):
         """ Add a coordinate on the SOM to this cluster"""
         self.ncoords += 1
         self.coordinates.add(coord)
@@ -235,6 +240,8 @@ class Agglomerator(object):
         
         self.graph = graph
         self.nodes = sorted(graph.graph.nodes())
+        
+        print(self.nodes[:10])
 
         self._create_clusters()
         self.cluster_tracker[len(self.clusters)] = self.clusters
@@ -270,17 +277,22 @@ class Agglomerator(object):
             test2 = (this_cluster, item) not in pairs
             return test1 and test2
 
-        if specifics != None:
-            where = np.nonzero(sum([np.where(self.clusters_map == x, 1, 0) for x in specifics]))
-            iterlist = zip(where[0], where[1])
-            
-        if specifics == None:
-            yvals = [x for x in range(self.som.grid_size[0])]
-            xvals = [x for x in range(self.som.grid_size[0])]
-            iterlist = itertools.product(yvals, xvals)
-        
+        def _make_iterlist():
+            """ Helper """
+            if specifics != None:
+                tmp = [np.where(self.clusters_map == x, 1, 0) for x in specifics]
+                where = np.nonzero(sum(tmp))
+                iterlist = zip(where[0], where[1])
+                
+            if specifics == None:
+                yvals = [x for x in range(self.som.grid_size[0])]
+                xvals = [x for x in range(self.som.grid_size[0])]
+                iterlist = itertools.product(yvals, xvals)
+                
+            return iterlist
+
         pairs, dist = set([]), 1
-        for row, col in iterlist:
+        for row, col in _make_iterlist():
 
             this_cluster = self.clusters_map[row, col]
 
@@ -294,8 +306,7 @@ class Agglomerator(object):
                          self.clusters_map[rmax, col],
                          self.clusters_map[row, cmin],
                          self.clusters_map[row, cmax]])
-
-            #neighbors  = set(clusters_map[rmin:rmax,cmin:cmax].ravel().tolist())
+            
             found.discard(this_cluster)
 
             # add this pair of clusters if its not already in the set
@@ -315,6 +326,26 @@ class Agglomerator(object):
             y_range = [y for y in range(self.som.grid_size[1])]
             return itertools.product(x_range, y_range)
         
+        def _knn_fit():
+            """ Helper """
+            # now assign prototypes to the remaining clusters
+            # by kNN as provided by sklearn. this forms the
+            # initial clusters_map which the agglomerator will use
+            # to find neighbors.
+            idxy, idxx = np.indices(self.som.umatrix.shape, np.uint8)
+            grid = np.c_[idxy.ravel(), idxx.ravel()]
+            
+            from sklearn.neighbors import KNeighborsClassifier
+            k = self.clusters.keys()
+            coords = [list(self.clusters[j].coordinates)[0] for j in k]
+            labels = [self.clusters[j].label for j in k]
+            knn = KNeighborsClassifier(weights='uniform', n_neighbors=1)
+            fitted = knn.fit(coords, labels).predict(grid)
+            
+            fitted = fitted.reshape(self.som.umatrix.shape)
+            return fitted
+            
+        
         # make sure we have a umatrix
         self.som.calculate_u_matrix(nearest=8)
         
@@ -323,7 +354,7 @@ class Agglomerator(object):
 
         for row, col in _iterator():
             cluster = self.cluster_obj(j, self.som.umatrix)
-            cluster.add_coordinate((row, col))
+            cluster.add_coord((row, col))
             self.clusters[j] = cluster
             j += 1
             
@@ -341,26 +372,13 @@ class Agglomerator(object):
             del self.clusters[key]
         
         # generate the initial umetric for each cluster
-        for name, obj in self.clusters.items():
+        for obj in self.clusters.values():
             obj.calculate_u_total()
 
-        # now assign prototypes to the remaining clusters
-        # by kNN as provided by sklearn. this forms the
-        # initial clusters_map which the agglomerator will use
-        # to find neighbors.
-        idxy, idxx = np.indices(self.som.umatrix.shape, np.uint8)
-        grid = np.c_[idxy.ravel(), idxx.ravel()]
-        
-        from sklearn.neighbors import KNeighborsClassifier
-        k = self.clusters.keys()
-        coords = [list(self.clusters[j].coordinates)[0] for j in k]
-        labels = [self.clusters[j].label for j in k]
-        knn = KNeighborsClassifier(weights='uniform', n_neighbors=1)
-        self.clusters_map = knn.fit(coords, labels).predict(grid).reshape(self.som.umatrix.shape)
+        self.clusters_map = _knn_fit()
 
         for row, col in _iterator():
-            j = self.clusters_map[row, col]
-            self.clusters[j].add_coordinate((row, col))
+            self.clusters[self.clusters_map[row, col]].add_coord((row, col))
 
     def _check_connectivity(self, pair):
         """ Check whether the subgraph composed of the union
@@ -392,7 +410,7 @@ class Agglomerator(object):
     def _evaluate_fringe(self):
         """ Return a fringe sorted by metric """
         fringe_list = [(k, v) for k, v in self.fringe.items()]
-        fringe_list.sort(key = lambda z: z[1])
+        fringe_list.sort(key=lambda z: z[1])
         return fringe_list
     
     def _merge(self, best):
@@ -439,8 +457,8 @@ class SOM(object):
     Typical usage pattern:
     
     som = SOM((15,15)) # 15x15 neurons
-    som.train(featureVectors,featureVectors.shape[0]*5) # each vector gets seen approximately 5 times
-    som.agglomerator.agglomerate(graph) # graph is the networkX object used to create featureVectors
+    som.train(featureVectors,featureVectors.shape[0]*5)
+    som.agglomerator.agglomerate(graph)
     som.agglometator.assign_tags_to_clusters()
     
     """
@@ -456,25 +474,38 @@ class SOM(object):
         
         # right now, only support 2-dimensional grids
         assert len(grid_size) == 2
-        
         self.grid_size = grid_size
-        self.n_nodes = grid_size[0]*grid_size[1]
         
-        # make the grid indices
-        self.grid = np.mgrid[0:grid_size[0], 0:grid_size[1]]
-        self.gidx = np.vstack((self.grid[1].ravel(), self.grid[0].ravel())).transpose()
-
+        self.neighbors = {4:((-1, 0), (1, 0), (0, 1), (0, -1)),
+                          8:((-1, -1), (-1, 0), (-1, 1), (0, -1), \
+                            (0, 1), (1, -1), (1, 0), (1, 1))}
+        
         # default learning parameters
         self.params = {'ratei':.4, 'ratef':0.05,
                        'sigmai':np.max(self.grid_size)/2,
                        'sigmaf':1, 'gammai':3, 'gammaf':0}
-        self.trained = False
-        self.counts = np.zeros((self.n_nodes,), np.float32)
+        
+        self.a_o = agglomerator_obj
+        
+        # most of the init action takes place in this function,
+        # which can also be called externally to clear everything
+        self.reset()
+
+    def reset(self):
         
         # stuff for umatrix
         self.umatrix = None
-        self.neighbors = {4:((-1, 0), (1, 0), (0, 1), (0, -1)),
-                          8:((-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1))}
+
+        # make the grid indices
+        self.grid = np.mgrid[0:self.grid_size[0], 0:self.grid_size[1]]
+        self.gidx = np.vstack((self.grid[1].ravel(), self.grid[0].ravel())).T
+
+        self.n_nodes = self.grid_size[0]*self.grid_size[1]
+        self.trained = False
+        self.counts = np.zeros((self.n_nodes,), np.float32)
+        
+        # the agglomerator
+        self.agglomerator = self.a_o(self)
 
         # stuff for frequency matrix
         self.frequency_matrix = None
@@ -497,9 +528,6 @@ class SOM(object):
         self.labels = None
         self.assigned = None
         
-        # the agglomerator
-        self.agglomerator = agglomerator_obj(self)
-
     def train(self, samples, iterations, params=None):
         
         """ Train the SOM using samples as input feature vectors.
@@ -538,12 +566,13 @@ class SOM(object):
         # when the samples come in we can make the weights
         self.samples = samples
         self.nsamples, self.ndim = samples.shape
-        self.weights = np.random.random((self.n_nodes, self.ndim)).astype(np.float32)
+        tmp = (self.n_nodes, self.ndim)
+        self.weights = np.random.random(tmp).astype(np.float32)
         
         self.is_sparse = sparse.issparse(samples)
         
         # update the learning parameters versus defaults
-        if params != None:
+        if params not in ('None', None):
             self.params.update(params)
         
         # this precomputes which samples will be used at each iteration
@@ -571,14 +600,16 @@ class SOM(object):
         self.trained = True
 
     def calculate_u_matrix(self, reduction='sum', nearest=4, unetwork=False):
-        """ Build the u-matrix from the weights. The value u_{i,j} at site (i,j)
-        is defined as reduction([d(w_{i,j}, w_{n,m})]) where d is the distance function,
-        w are the weights, and {n,m} indicate the nearest neighbors to site (i,j).
+        """ Build the u-matrix from the weights. The value u_{i,j} at site
+        (i,j)  is defined as reduction([d(w_{i,j}, w_{n,m})]) where d is
+        the distance function, w are the weights, and {n,m} indicate the
+        nearest neighbors to site (i,j).
         
-        reduction is by default the mean but could also be some other function, like max().
+        reduction is by default the mean but could also be some other
+        function, like max().
         
-        nearest is the number of nearest neighbors to use. if nn = 4, only use direct x or y
-        neighbors. if nn = 8, also use diagonal neighbors."""
+        nearest is the number of nearest neighbors to use. if nn = 4, only use
+        direct x or y neighbors. if nn = 8, also use diagonal neighbors."""
         
         slices = {-1:':-1', 0:':', 1:'1:'}
         
@@ -588,7 +619,8 @@ class SOM(object):
         
         for neighbor in nearest:
             
-            rld = np.roll(np.roll(weights, neighbor[0], axis=0), neighbor[1], axis=1)
+            rld = np.roll(weights, neighbor[0], axis=0)
+            rld = np.roll(rld, neighbor[1], axis=1)
             dist = np.sqrt(np.sum((weights-rld)**2, axis=-1))
 
             # because boundary conditions aren't circular, do
@@ -621,7 +653,7 @@ class SOM(object):
         from collections import Counter
         self.frequency_matrix = np.zeros(self.grid_size, np.int)
         if self.trained:
-            # we can probably make this faster through smarter division of vectors
+            # we can probably make this faster
             if self.is_sparse:
                 function = find_winner_mp_sparse
             else:
@@ -670,8 +702,8 @@ class SOM(object):
 
     def _update_weights(self, sample, winner, rate, sigma):
         """ Given a feature vector "sample", the winning neuron "winner",
-        the learning rate "rate", and the (isotropic) gaussian neighborhood size "sigma",
-        update the weights in the protype neurons"""
+        the learning rate "rate", and the (isotropic) gaussian neighborhood
+        size "sigma", update the weights in the protype neurons"""
         
         # array manipulations in this function are somewhat complicated to
         # allow fast vector operations, achieving very high single-threaded
@@ -717,6 +749,9 @@ class MultiSOM(object):
         self.knn_borders = None
         self.umatrixlist = None
         self.umatrix = None
+        
+    def reset(self):
+        self.SOM.reset()
 
     def train(self, samples, iterations, repeats, params=None, debug=False):
         """ Train several SOMs using samples as input feature vectors.
@@ -772,6 +807,9 @@ class MultiSOM(object):
         self.iterations = iterations
         self.som_params = params
         
+        if params == None:
+            params = 'None'
+        
         jobs = [(self.grid_size, int(repeats/4), self.samples,
                  iterations, params, self.graph) for dummy in range(4)]
         
@@ -779,9 +817,11 @@ class MultiSOM(object):
         if debug:
             self.repeats = sum([_train_mp(job) for job in jobs])
         else:
+            print(jobs)
             self.repeats = sum(self.workers.map(_train_mp, jobs))
     
-    def assign_prototypes_knn(self, samples=None, iterations=None, params=None, analysis=None):
+    def assign_prototypes_knn(self, samples=None, iterations=None,
+                              params=None, analysis=None):
         
         """ Train a SOM and assign prototypes to the clusters found through
         cluster_reproducibility using KNN algorithm from sklearn"""
@@ -803,6 +843,32 @@ class MultiSOM(object):
             border[:-1, :] += 8*(array[:-1, :] != array[1:, :])
 
             return border
+        
+        def _make_classifier():
+            """ Helper """
+            # follow the recipe for using the knn classifier
+            from sklearn.neighbors import KNeighborsClassifier
+            idy, idx = np.indices(self.SOM.umatrix.shape, np.uint8)
+            grid = np.c_[idy.ravel(), idx.ravel()]
+            knn = KNeighborsClassifier(weights='uniform', n_neighbors=10)
+            ncpu = len(self.workers._pool)
+            
+            return grid, knn, ncpu
+            
+        def _make_chunks():
+            j = working['members'].items()
+            entries = [(n, samples[i2]) for n, i in j for i2 in i]
+            cuts = np.linspace(0, len(entries), ncpu+1).astype(int)
+            chunks = [(entries[cuts[i]:cuts[i+1]], self.SOM.weights,
+                       self.SOM.grid_size) for i in range(ncpu)]
+            return chunks
+        
+        def _find_winners():
+            tmp = self.workers.map(find_winners_mp, chunks)
+            coords = [item[0] for sublist in tmp for item in sublist]
+            labels = [item[1] for sublist in tmp for item in sublist]
+            return coords, labels
+            
 
         # first, train the som and build a umatrix
         if samples == None:
@@ -815,41 +881,32 @@ class MultiSOM(object):
         self.SOM.train(samples, iterations, params)
         self.SOM.calculate_u_matrix()
         
-        self.umatrix = (self.SOM.umatrix*255./self.SOM.umatrix.max()).astype(np.uint8)
+        self.umatrix = (self.SOM.umatrix*255./self.SOM.umatrix.max())
+        self.umatrix = self.umatrix.astype(np.uint8)
         self.umatrixlist = self.umatrix.tolist()
 
-        # follow the recipe for using the knn classifier
-        from sklearn.neighbors import KNeighborsClassifier
-        idy, idx = np.indices(self.SOM.umatrix.shape, np.uint8)
-        grid = np.c_[idy.ravel(), idx.ravel()]
-        knn = KNeighborsClassifier(weights='uniform', n_neighbors=10)
-        ncpu = len(self.workers._pool)
+        grid, knn, ncpu = _make_classifier()        
 
         # for each entry in analysis, make a map of the winners
         if analysis == None:
             analysis = self.reproduction_analysis
 
-        for counter, working in enumerate(analysis):
+        for working in analysis:
             # create a series of cluster labels and vector indices
             # to distribute to the workers. then slice them into
             # as many portions as there are workers. this minimizes
             # the transfers.
-            entries = [(nc, samples[i]) for nc, idx in working['members'].items() for i in idx]
-            cuts = np.linspace(0, len(entries), ncpu+1).astype(int)
-            chunks = [(entries[cuts[i]:cuts[i+1]], self.SOM.weights, self.SOM.grid_size) for i in range(ncpu)]
+            chunks = _make_chunks()
             
-            # find the winners. we get a list of lists back and need to decompose it
-            tmp = self.workers.map(find_winners_mp, chunks)
-            coords = [item[0] for sublist in tmp for item in sublist]
-            labels = [item[1] for sublist in tmp for item in sublist]
+            coords, labels = _find_winners()
             
-            # classify all points in the SOM with the kNN algorithm. code is adapated
-            # from the sklearn documentation.
-            predicted = knn.fit(coords, labels).predict(grid).reshape(self.SOM.umatrix.shape)
-            borders = _borders(predicted)
+            # classify all points in the SOM with the kNN algorithm.
+            # code is adapated from the sklearn documentation.
+            predicted = knn.fit(coords, labels).predict(grid)
+            predicted = predicted.reshape(self.SOM.umatrix.shape)
 
             self.knn_clusters.append(predicted.tolist())
-            self.knn_borders.append(borders.tolist())
+            self.knn_borders.append(_borders(predicted).tolist())
 
     def cluster_reproducibility(self, repeats=None, clusters=50):
         
@@ -908,9 +965,10 @@ class MultiSOM(object):
             repeats = self.repeats
         spectral = SpectralClustering(n_clusters=1, affinity="precomputed")
 
-        this_cluster = 0
+        cluster = 0
         
-        self.reproduction_matrices = np.zeros((clusters,)+repeats.shape[1:], np.uint8)
+        shape = (clusters,)+repeats.shape[1:]
+        self.reproduction_matrices = np.zeros(shape, np.uint8)
         self.reproduction_analysis = []
 
         for idx, repeat in enumerate(repeats[:clusters]):
@@ -918,7 +976,7 @@ class MultiSOM(object):
             # run the spectral clustering on the current repeat array.
             # this is the rate limiting step, and already uses all
             # available cpu cores.
-            spectral.set_params(n_clusters = idx+1)
+            spectral.set_params(n_clusters=idx+1)
             spectral.fit(repeat)
             labels = spectral.labels_
 
@@ -927,21 +985,21 @@ class MultiSOM(object):
             count = Counter(spectral.labels_)
             by_size = [(k, v) for k, v in count.items()]
             by_size.sort(key=lambda x: -x[1])
-            members = {str(t[0]+this_cluster):_find(labels, t) for t in by_size}
-            order = np.hstack([members[str(t[0]+this_cluster)] for t in by_size])
+            members = {str(t[0]+cluster):_find(labels, t) for t in by_size}
+            order = np.hstack([members[str(t[0]+cluster)] for t in by_size])
 
             #rearrange
             rearr = repeat[order].transpose()[order]
             sizes = [[str(k), len(v)] for k, v in members.items()]
-            sizes.sort(key = lambda x: -x[1])
+            sizes.sort(key=lambda x: -x[1])
             
             # m gives the counts for each pair of tags. 3d array.
             # shape: [nclusters-1,ntags,ntags]. members are the tag
             # indices; self.graph.graph.nodes()[members] gives members as words.
-            # sizes are the number of tags in each labeled cluster, sorted by size
+            # sizes are the number of tags in each cluster, sorted by size
             tmp = {'members':members, 'sizes':sizes}
             
             rescale = (rearr*255./rearr.max()).astype(np.uint8)
             self.reproduction_matrices[idx] = rescale
             self.reproduction_analysis.append(tmp)
-            this_cluster += idx+1
+            cluster += idx+1
