@@ -6,7 +6,7 @@ Author: Daniel Parks (dhparks@lbl.gov)
 
 """
 
-__version_info__ = ('2014','05','13')
+__version_info__ = ('2014','06','30')
 __version__ = '.'.join(__version_info__)
 
 # if you make a new file/module name, put it here.  These are alphabetized.
