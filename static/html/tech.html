@@ -1,0 +1,524 @@
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8"/>
+
+<title>Clustrr: Find Hierarchical Data in Flickr Photostreams</title>
+
+<!-- get the stylesheet -->
+
+<style>
+    
+    .textsection {
+	width: 40%;
+	margin: auto;
+	text-align:justify;
+	text-justify:inter-word;
+    }
+    
+    .figure {
+	text-align:center;
+	margin:auto;
+	font-size: small;
+    }
+    
+    .caption {
+	width: 70%;
+	margin: auto;
+	text-align:justify;
+	text-justify:inter-word;
+    }
+    
+    .equation {
+	text-align: center;
+	margin:auto;
+    }
+    
+#header {
+    text-align:center;
+    margin: 0 auto;
+}
+
+.title {
+    font-size:60px;
+    font-family:"Tahoma", "Geneva", sans-serif;
+}
+
+.titlestart {
+    color: #006add;
+}
+
+.titleend {
+    color: #ff1981;
+}
+
+#subtitle {
+    font-family:"Tahoma", "Geneva", sans-serif;
+    font-size:12px;
+}
+    
+</style>
+
+</head>
+<body>
+    
+<div id="header">
+    <span class="title titlestart" >Clustr</span><span class="title titleend">r</span>
+    <div id="subtitle">Uncover the Hierarchical Structure within Flickr&trade; Photostreams</div>
+    <p></p>
+</div>
+    
+<section>
+<div class="textsection">
+<h2>TABLE OF CONTENTS</h2>
+
+<ol>
+    <li><a href="#introduction">Introduction</a></li>
+    <li><a href="#scraping">Data Scraping</a></li>
+    <li><a href="#graph">Graph Analysis</a></li>
+    <li><a href="#som">Self-Organizing Maps</a></li>
+    <li><a href="#agglomerative">Agglomerative Clustering</a></li>
+    <li><a href="#reproducibility">Cluster Reproducibility</a></li>
+    <li><a href="#interaction">User Interaction</a></li>
+    <li><a href="#reading">Further Reading</a></li>
+</ol>
+</div>
+</section>
+    
+<section>
+<div class="textsection" id="introduction">
+<h2>1. INTRODUCTION</h2>
+Tagged photos in <a href="http://flickr.com">Flickr</a> photostreams present a wealth of semantic content
+amenable to analysis through machine learning techniques. Clustrr applies
+several advanced unsupervised machine learning algorithms (spectral clustering,
+agglomerative clustering, self-organizing neural networks) to find hierarchical
+structure in the tag co-occurrence relationships of a Flickr photostream.
+<p></p>
+For example, in my own photostream, Clustrr identifies a tag cluster at a
+certain depth in the hierarchy consisting of the tags:
+<ul>
+    <li>clouds, campanile, storm, clear, sathertower, goldengatebridge,
+    night, olympus40150, eastbay, oakland</li>
+</ul>
+Drilling father into the hierarchy splits this cluster into smaller groups,
+for example:
+<ul>
+    <li>clouds, campanile, storm, clear, sathertower, night</li>
+    <li>goldengatebridge, olympus40150, eastbay, oakland</li>
+</ul>
+The goal of this tech page is to explain the process behind this
+classification.	
+<p></p>
+</div>
+</section>
+
+<section>
+<div class="textsection" id="scraping">
+<h2>2. DATA SCRAPING AND STORAGE</h2>
+Clicking the "Analyze!" button initiates scraping of the specified Flickr
+user's photostream using python bindings to Flickr's <a href="https://www.flickr.com/services/api/">public API</a>.
+The JSON returned from Flickr's database in response to a query to the
+<a href="https://www.flickr.com/services/api/flickr.people.getPublicPhotos.html">
+<i>people.getPublicPhotos</i> method</a> includes parseable semenatic content for
+each photo in three fields: tags, title, and description.
+Content in all three fields undergoes basic munging to remove troublesome
+characters, including html tags and special characters which can ultimately
+interfere with the HTML or SVG DOM of the webapp's interface.
+<p></p>
+Following parsing and munging, Clustrr inserts the returned information
+regarding each photo into a <a href="http://sqlite.org">SQLite</a> database with fast text search capability
+enabled by the FTS4 extension.
+<p></p>
+</div>
+</section>
+
+<section>
+<div class="textsection" id="graph">
+<h2>3. GRAPH ANALYSIS</h2>
+Once scraping completes, Clustrr pulls semantic content about the photos from
+the database and transforms it into a weighted <a href="https://networkx.github.io/">NetworkX</a>
+<a href="http://networkx.lanl.gov/reference/classes.digraph.html">DiGraph</a> object
+whose nodes are word-tokens and whose edges are initially token co-occurrences.
+The current version of Clustrr uses only tokens generated from tags, rather
+than from the photo title or description, to generate the graph. For example,
+imagine a photostream consisting of three photos with the following tags:
+<p></p>
+<ul>
+<li>Photo 1: berkeley, oakland</li>
+<li>Photo 2: berkeley, oakland, campanile</li>
+<li>Photo 3: campanile, sathertower</li>
+</ul>
+<p></p>
+The digraph of this photostream would contain four nodes (berkeley, oakland,
+campanile, sathertower) and eight edges (berkeley-oakland, oakland-berkeley,
+berkeley-campanile, campanile-berkeley, oakland-campanile, campanile-oakland,
+campanile-sathertower, sathertower-campanile). The value of the edges would be
+the number of times each pair of tags co-occurs; berkeley-oakland and
+oakland-berkeley would both have value two, all other edges value one.
+This is represented in Figure 1. Even though the co-occurrence data is
+symmetric, Clustrr uses a directed graph structure as other useful link weight
+metrics are directional.
+<p></p>
+<div class="figure">
+<img src="../images/basic_graph.png" height=200></img>
+<p></p>
+Figure 1: A simple digraph showing fictitious tag co-occurrences.
+<p></p>
+</div>
+The eigenvalue spectrum of the normalized laplacian [6, 7] of the affinity
+matrix of the co-occurrence digraph immediately provides insight into whether
+there exists a "natural" number of clusters within the graph which some optima
+l set of cuts can isolate. Given the affinity matrix A and degree matrix D of
+the digraph (in-degree and out-degree are equal for token co-occurrence), the
+normalized graph laplacian is given by:
+<p></p>
+<img class="equation" src="../images/laplacian.png" height="20">
+<p></p>
+A natural number of clusters exists in the graph if the eigenvalues of L have
+a clear gap [8]. A typical eigenvalue spectrum as displayed in the Clustrr GUI
+is shown in Figure 2, and unfortunately displays no clear gap. For comparison, we
+also show the eigenvalue spectrum and obvious eigengap for a more structured
+dataset discussed below. The lack of an obvious gap in the Flickr
+dataset indicates that an obvious set of graph-cuts to divide the tags into clusters
+probably does not exist, due to the richly co-occurring nature of the tags.
+<p></p>
+<div class="figure">
+<img src="../images/eigengap.png" height=250></img>
+<p></p>
+<div class="caption">
+Figure 2: (left) The eigenvalue spectrum of the counts co-occurrence matrix
+for a typical, well-tagged Flickr <a href="http://flickr.com/photos/parksdh">
+photostream</a> (taken from a screenshot of Clustrr). No obvious gap is seen.
+(right) The eigenvalue spectrum, with two obvious gaps, of a much more structured
+dataset; see Figure 4.
+</div>
+<p></p>
+</div>
+We require
+different methods of clustering the tags which can reveal structure to their
+organziation at a variable level of precision. In formulating these methods,
+additional co-occurrence metrics prove valuable. In addition to the simple
+tag co-occurrence, Clustrr also calculates the <a href="http://en.wikipedia.org/wiki/Jaccard_index">Jaccard index</a>:
+<p></p>
+<img class="equation" src="../images/jaccard.png" height="45">
+<p></p>
+where <i>P<sub>i</sub></i> and <i>P<sub>j</sub></i> are sets of posts tagged with particular tokens
+<i>i</i> and <i>j</i>, respectively. Clustrr also calculates the fuzzy-logic similarity [10],
+an asymmetic metric which requires the digraph structure:
+<p></p>
+<img class="equation" src="../images/fuzzylogic.png" height="45">
+<p></p>
+where <i>x<sub>ik</sub></i> is the number of times tokens <i>x<sub>i</sub></i>
+and <i>x<sub>k</sub></i> co-occur. The fuzzy logic similarity indicates to what
+degree a token is subsumed within another.
+<p></p>
+Although the eigenvalue spectrum often fails to identify any obvious structure in
+a photostream, eigenspace methods are very useful in analyzing other aspects of the
+tag graph. In particular, Clustrr uses the concept of <a href="http://en.wikipedia.org/wiki/Centrality#Eigenvector_centrality">
+eigenvector centrality</a> to identify which tags are most important in a graph; a cluster
+identified by the methods explained below can be represented as a subgraph of
+the whole-photostream digraph and the relative importance of the subgraph's tags
+can be estimated by the eigenvector centralities of the corresponding co-occurrence
+affinity matrix.
+</div>
+</section>
+
+<section>
+<div class="textsection" id="som">
+<h2>4. SELF ORGANIZING MAPS</h2>
+A fundamental problem in clustering tags from Flickr photostreams is that when
+considered as an affinity matrix, each of the N tags is represented by an
+N-dimensional feature vector. Most clustering algorithms fail in this case as
+the dimensionality of the problem is too high. Therefore, Clustrr first reduces
+the dimensionality of the problem using a type of neural network called a
+<a href="http://en.wikipedia.org/wiki/Self-organizing_map">self-organizing map (SOM)</a>,
+also known as a Kohonen map (other approaches to
+reducing the dimensionality of the affinity matrix worth exploring might
+include: the <a href="http://en.wikipedia.org/wiki/Isomap">isomap algorithm</a>,
+<a href="http://en.wikipedia.org/wiki/Sammon_mapping">Sammon's mapping</a>, or
+<a href="http://en.wikipedia.org/wiki/Autoencoder">autoencoding neural networks</a>).
+<p></p>
+In brief, the SOM used in Clustrr is a 15x15 grid of "neurons", each of which
+are represented by a vector <i>W<sub>i,j</sub></i> with the same dimensionality as the feature
+vectors composing the affinity matrix of the tag co-ocurrence graph. The SOM is
+trained by repeatedly exposing it to a set of training vectors <i>V</i>, in this case
+rows of the affinity matrix. When a training input <i>V<sub>k</sub></i> is seen by the neural
+network, the "winning" neuron is said to be that neuron whose weight vector has
+the minimum Euclidean distance to the training vector. All the neuron weights
+W are updated after each exposure according to the equation:
+<p></p>
+<img class="equation" src="../images/som_update.png" height="45">
+<p></p>
+where <i>d</i> is the distance on the grid between the "winning" neuron for the input
+vector and neuron <i>i</i>, <i>r(t)</i> is the "learning rate", and <i>&#963(&#964)</i> is a
+neighborhood size parameter. For the training of the neural network to converge,
+the value of both <i>r(&#964)</i> and <i>&#963(&#964)</i> must decrease as training progresses
+and the training epoch <i>&#964</i> increases. By updating not just the winning neuron
+to replicate an input vector but also its neighbors, similar vectors become
+grouped in the SOM and the high-dimensional topology of the input set is
+retained in the two-dimensional projection of the map. Figure 3 shows a
+cartoon representation of a SOM with winning neuron and surrounding neighbors
+illuminated according to the strength of their learning.
+<p></p>
+<div class="figure">
+<img src="../images/training.png" height=250></img>
+<p></p>
+<div class="caption">
+Figure 3: An input training vector Vi activates a particular neuron (orange)
+in the SOM, training both it and the neighboring neurons (green).
+</div>
+<p></p>
+</div>
+Because each grid site in the SOM has the same dimensionality as the input
+vectors, it is common to visualize the SOM through its associated U-matrix [14].
+The value of the U-matrix at any position in the SOM grid is a function of the
+distance between the weight vector <i>W<sub>i</sub></i> at that site and the weight vectors of
+its nearest neighbors. In Clustrr, the value of the U-matrix is given by the
+sum of the euclidean distances between the vector on a site and the vectors of its nearest neighbors. Presented with
+a reverse colormap, this means that white (black) portions the of U-matrix
+represent regions of high (low) similarity between SOM weight vectors. In this
+way, naturally occurring tag cluster may be identified visually.
+<p></p>
+<div class="figure">
+<img src="../images/som.png" height=250></img>
+<p></p>
+<div class="caption">
+Figure 4: Left: the SOM calculated from a set of vectors clustered around
+eight equally-distributed points in HLS color space. Right: the U-Matrix of the
+SOM, showing strong local differences in SOM prototypes moving between
+the clusters.
+</div>
+<p></p>
+</div>
+To illustrate the topology preservation of the SOM and the SOM's representation
+as a U-matrix, we show in Figure 4 a SOM trained on test data with a known,
+highly clustered structure (left) and its associated U-matrix (right). In this
+case, we generated a set of vectors clustered around eight anchor points equally
+distributed in hue around a colorwheel with fixed saturation and lightness.
+Vectors in each cluster were generated by small random displacements along
+RGB components. Because the data in each vector represents color information, we
+can show this direct representation of the SOM and easily identify the eight
+hues. In the U-matrix, we identify eight white regions of highly similar SOM
+prototype vectors, as well as the dark transition regions between them.
+<p></p>
+</div>
+</section>
+
+<section>
+<div class="textsection" id="agglomerative">
+<h2>5. AGGLOMERATIVE CLUSTERING OF THE SOM</h2>
+In the absence of a good "natural" number of clusters in the matix co-occurrence
+matrix (as shown by the typical lack of a strong gap in the eigenvalue spectrum,
+section 2 above), Clustrr instead builds a dendogram of candidate clusters
+through iterative agglomeration of neighboring clusters in the SOM. The algorithm
+proceeds as follows:
+<ol>
+<li>Assign each feature vector from the affinity matrix to a neuron, initiating
+a cluster; there is no restriction on number of vectors initially
+assigned to a neuron.</li>
+<li>Assign unassigned neurons in the SOM are assigned to the nearest labeled
+cluster through the k-nearest-neighbors algorithm; ties are broken at random.</li>
+<li>While more than 1 cluster exists:
+<ol>
+<li>Find all pairs of neighboring clusters</li>
+<li>Combine the pair of clusters which minimizes some pair-wise objective function</li>
+</ol>
+</ol>
+<p></p>
+In the current version of Clustrr, the objective function minimized in the iterative
+agglomeration is the sum of u-matrix values within a candidate agglomerated cluster.
+Additionally, the subgraph formed by the tokens corresponding to the member vectors
+of the cluster must be connected.
+<p></p>
+While a variety of objective functions exist in the literature for the agglomerative
+clustering of feature vectors, such as Ward's method or other variance-based metrics,
+minimizing the summed U-matrix value of
+the SOM gives several advantages. First, the topology-preserving character of the
+SOM makes the neighbor relationship between clusters a powerful indication of
+similarity. Second, as the U-matrix is scalar and precomputed, agglomerating based
+on its value is extremely fast. In general, agglomerative clustering runs in
+<i>O(n<sup>3</sup>)</i> time, but the constraint on agglomerating only neighboring clusters
+reduces the candidate space and speeds the algorithm considerably.
+</div>
+</section>
+
+
+<section>
+<div class="textsection" id="reproducibility">
+<h2>6. CLUSTER REPRODUCIBILITY</h2>
+Not all the clusters found in the agglomeration reproduce well in all trained
+SOMs due to the random initialization of the neuron weight vectors and the
+fact that at a given level of the dendogram the distinctions between clusters
+may be forced and suboptimal. For this reason, it is important to examine the
+reproducibility of clusters.
+<p></p>
+To measure the reproducibility of clusters, we train and agglomerate several
+SOMs. For each level of the agglomeration dendogram (i.e, for a given number
+of agglomerated clusters), we count the co-occurrence of each pair of tokens.
+In other words, we might find that "berkeley" and "sather tower" co-occur 20
+times out of 25 SOMs when there are 10 clusters, but "berkeley" and
+"san francisco" co-occur only 15 times out of 25 SOMs when there are 10
+clusters. From this, we would conclude that "berkeley" and "sather tower"
+should be probably be clustered together at the 10-cluster level of the
+dendogram in preference to clustering "berkeley" and "san francisco".
+<p></p>
+<div class="figure">
+<img src="../images/reproducibility.png" height=250></img>
+<p></p>
+<div class="caption">
+Figure 5: (left) Vector co-occurrences in repeated SOM training and cluster
+agglomeration of the SOM shown in Figure 4. (right) The same vector
+co-occurrences rearranged according to the labels found by spectral
+clustering. Off-diagonal elements show where similar clusters are sometimes
+confused for each other.
+</div>
+<p></p>
+</div>
+To separate clusters based on the reproducibility of the agglomerative
+clustering, we perform spectral clustering of the dendogram co-occurrence
+matrix. Because we know the number of clusters in each level of the dendogram,
+we do not encouter the typical problem in unsupervised clustering of deciding
+an optimal number of clusters. Both stages of the spectral clustering (the
+eigenvalue decomposition and the k-means clustering) are handled within
+Clustrr by the <a href="http://scikit-learn.org/stable/modules/clustering.html#spectral-clustering">scikit-learn library</a>.
+<p></p>
+We show an example outcome of this process in Figure 5. We used the same
+data as was used to generate the colorful SOM and U-matrix in Figure 4, but
+repeated the training and agglomerative clustering 50 times. At left, we show
+the co-occurrence of each pair of vectors at the eight-cluster level of the
+dendogram (white indicates frequent co-occurrence). After spectral clustering,
+the highly organized cluster structure is revealed as the bright blocks along the
+diagonal. The performance of the clustering is not entirely reproducible: vectors
+are sometimes assigned to a wrong, but similar cluster (for example, blue instead
+of purple). This effect appears as power outside of the diagonal blocks.
+Consequently, clusters with minimal off-diagonal power are the most reproducible.
+</div>
+</section>
+
+<section>
+<div class="textsection" id="interaction">
+<h2>7. USER INTERACTION</h2>
+<div class="figure">
+<img src="../images/usage2.jpg"></img>
+<p></p>
+<div class="caption">
+Figure 6: Clustrr in use.
+(A): eigenvalue spectrum and cluster number selector.
+(B): umatrix of SOM showing reproducible agglomerated clusters.
+(C): cluster reproducibility matrix.
+(D): composite word cloud of selected clusters; background number
+is size of set of photos containing all selected tags.
+(E): thumbnails of photos containing all selected tags, with
+links to individual Flickr photopages.
+</div>
+<p></p>
+</div>
+The Clustrr interface defines and expects one dominant mode of user interaction
+with the data analyzed from a photostream. The top row, consisting of (A), (B),
+and (C) in Figure 6, presents top-level information about cluster relationships.
+The second row, consisting of (D), shows those tags present in selected clusters.
+The third row, consisting of (E), shows those photos with the selected tags.
+<p></p>
+In (A), Clustrr displays the eigenvalue spectrum of the tag co-occurence affinity
+matrix and a draggable slider to traverse the dendogram and change the number
+of agglomerated clusters. As discussed earlier, in a typical photostream the
+tags do not divide into obvious clusters, and the eigenspectrum lacks an obvious
+gap. Cluster number is selected by dragging the blue vertical indicator along
+the x-axis.
+<p></p>
+In (B), Clustrr displays the U-matrix of one of the several SOMs trained to
+examine cluster reproducibility. Clusters borders are delineated on the SOM
+as pink lines. Clicking on an neuron/grid-site in the SOM will select the
+cluster which owns that site and highlight it in blue. Because clusters are
+assigned based on a composite of many trained SOMs and (B) displays
+a single particular SOM, clusters displayed in Clustrr may violate the
+requirement enforced in agglomeration that clusters be contiguous. This
+is particularly the case for clusters with poor reproducibility.
+<p></p>
+In (C), Clustrr displays the cluster reproducibility matrix found through
+the spectral clustering of tag co-occurences in the agglomeration of many SOMs.
+On-diagonal block elements are outlined in pink and may be selected and
+deselected by clicking. Highly reproducible clusters are consistently white
+and have little off-diagonal power in their rows and columns.
+<p></p>
+In (D), tags present in the selected cluster are displayed as a word cloud. Clustrr encodes
+the importance of each tag along two different axes: counts and centralities.
+Counts are encoded by size (more counts equals bigger text), while eigenvector
+centrality is encoded as color (more red equals more central, more blue
+equals less central). If more than one cluster is selected, relative sizes and
+centralities are NOT recalculated for a composite graph as an arbitrary
+sub-graph of the photostream is probably not connected. Tags can be selected by
+clicking; Clustrr shows tag selection by changing their color to gold.
+The dynamic numeral behind the word cloud indicates the number of photos
+containing all selected tags.
+<p></p>
+In (E), thumbnails of photos containing all selected tags are displayed as
+links to the original photopage on Flickr. Up to 15 photos are displayed at
+a time; if there are more than 15 photos in the tag intersection, results
+may be scrolled through the up- and down-arrows.
+</div>
+</section>
+
+<section>
+<div class="textsection" id="tools">
+<h2>7. TOOL DETAILS</h2>
+All of Clustrr is written in Python (back) and Javascript (front) and is entirely
+the work of Daniel Parks, obviously excepting the use of libraries and packages
+credited below. 
+<p></p>
+In front, both <a href="http://jquery.com">jQuery</a> and <a href="http://d3js.org">D3</a> see extensive use in the
+manipulation of the HTML and SVG DOM, respectively. The progress indicator,
+the plot of the eigenvalue spectrum, the display of the SOM U-matrix,
+the cluster reproducibility selector, the number-of-photos indicator, and
+the thumbnail explorer are custom javascript objects implementing D3- or jQ-
+based methods for interaction. The word cloud is based on the <a href="https://github.com/jasondavies/d3-cloud">
+d3-cloud library</a>, modified to allow for custom colors, clickable text, and optimal
+sizing to fit the bounding box. Best efforts have been made to make the
+interface as responsive as possible, but the large number of SVG elements in
+the SOM and the difficulty of finding an optimal size of the word-cloud 
+scaling can sometimes lead to slowdowns.
+<p></p>
+In back, the web application uses <a href="http://flask.pocoo.org/">Flask</a> for request handling and routing.
+Flickr communication is managed through the <a href="https://bitbucket.org/sybren/flickrapi/">FlickrAPI package</a> and
+scraped semantic data gets stored in SQLite databases with the <a href="http://www.sqlite.org/fts3.html">FTS4 extension</a>.
+Graph data-structures are managed by the tools provided by <a href="https://networkx.github.io/">NetworkX</a>.
+Several highly-optimized <a href="http://numpy.org">Numpy</a> routines handle the heavy numerical
+calculations for training the SOM (interestingly, <a href="https://code.google.com/p/numexpr/">numexpr</a> implementation
+of the calculations proved slower than numpy), while the kNN step of the
+agglomerator and the spectral clustering of the reproducibility matrix use the
+codes provided by <a href="http://scikit-learn.org/stable/">scikit-learn</a>. Clustrr uses Python multiprocessing where
+appropriate, most obviously in training duplicated SOMs to examine cluster
+reproducibility.
+<p></p>
+You can find the source code for this project<a href="https://github.com/dhparks/clustrr">on github</a>.
+</div>
+</section>
+
+<section>
+<div class="textsection" id="reading"	>
+<h2>8. FURTHER READING</h2>
+<ol>
+<li>https://bitbucket.org/sybren/flickrapi/</li>
+<li>https://www.flickr.com/services/api/</li>
+<li>https://www.flickr.com/services/api/flickr.people.getPublicPhotos.html</li>
+<li>http://www.sqlite.org/fts3.html</li>
+<li>http://networkx.lanl.gov/reference/classes.digraph.html</li>
+<li>http://web.mit.edu/~wingated/www/introductions/tutorial_on_spectral_clustering.pdf</li>
+<li>http://en.wikipedia.org/wiki/Laplacian_matrix</li>
+<li>http://charlesmartin14.wordpress.com/2012/10/09/spectral-clustering/</li>
+<li>
+<li>G.A. Carpenter and S. Grossberg and N. Markuzon and J.H. Reynolds and D.B.
+Rosen. Fuzzy ARTMAP: A neural network architecture for incremental supervised
+learning of analog multidimensional maps. IEEE Transactions on Neural Networks,
+3(5):698-713, 1992.</li>
+<li></li>
+<li></li>
+<li></li>	
+<li></li>
+</ol>
+<p></p>
+</div>
+</section>
+
+    
+</body>
+</html>
