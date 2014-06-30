@@ -1,12 +1,25 @@
 from __future__ import print_function
 from __future__ import absolute_import
-from flask import Flask, jsonify, request, send_from_directory, json, session, render_template
+
+from flask import Flask, jsonify, request, redirect, send_from_directory, json, session, escape, render_template
+from werkzeug import secure_filename
+from flask.ext.compress import Compress
 import os
+import uuid
+import shutil
+from os.path import getctime
+
+import re
+
 import time
 from datetime import timedelta
+import numpy
+
 import glob
 import random
+
 import interface.flickr_backend as ifb
+
 
 app = Flask(__name__)
 
@@ -21,9 +34,9 @@ def manage_session():
     def _delete_old_sessions():
         # delete old sessions from the sessions dictionary.
         time0 = time.time()
-        for s_key in sessions.keys():
-            if time0-sessions[s_key]['last'] > 3600*8:
-                del sessions[s_key]
+        for sk in sessions.keys():
+            if time0-sessions[sk]['last'] > 3600*8:
+                del sessions[sk]
                 
     def _make_new_session():
         
@@ -52,21 +65,23 @@ def manage_session():
 # and send it to the correct backend
 @app.route('/')
 def serve_landing():
-    """ Send the landing page to the browser """
+    # now send the landing page
     manage_session()
     print("serving session %s"%session['s_id'])
     return send_from_directory(".", "static/html/demo.html")
 
-def error_page(kwargs):
-    """ Send the error page to the browser """
-    kwargs['img'] = random.choice(sadbabies)
-    return render_template('error.html', **kwargs)
+@app.route('/<page>.html', methods=['GET',])
+def serve_static_page(page):
+    """ Serve a static html page, for example tech.html """
+    return send_from_directory(".", 'static/html/%s.html'%page)
+
+@app.route('/images/<img>', methods=['GET',])
+def serve_static_image(img):
+    return send_from_directory(".", 'static/images/%s'%img)
 
 @app.route('/<project>/<cmd>', methods=['GET', 'POST'])
 def dispatch_cmd(project, cmd):
-    """ Dispatch a command from the browser to the backend """
-    
-    print(project, cmd)
+    print(cmd)
 
     occ = 'executing a command'
     
@@ -77,17 +92,18 @@ def dispatch_cmd(project, cmd):
     
     if backend == None:
         error = "expired session"
-        kwargs = {'error':error, 'occasion':occ}
+        kwargs = {'error':"expired session",'occasion':occ}
         return error_page(kwargs)
-
+    
     from_backend = backend.cmds[cmd](request.args, request.json, request.form)
     return jsonify(**from_backend)
 
 # for session management
+import os
 app.secret_key = os.urandom(24)
 app.permanent_session_lifetime = timedelta(minutes=60*8)
 
 if __name__ == '__main__':
-    sadbabies = glob.glob('static/error/sadbaby*.jpg')
+    Compress(app)
     app.run(host="0.0.0.0", port=5004, debug=False)
     
