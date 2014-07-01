@@ -176,8 +176,8 @@ class TagCloud(object):
             pid = photo['id']
             if _photo_is_new(pid):
                 test = photo['tags'] != ('')
-                test = test and photo['description'] != ('')
-                test = test and photo['title'] != ('')
+                test = test or photo['description'] != ('')
+                test = test or photo['title'] != ('')
                 if test:
                     return True
             return False
@@ -319,8 +319,8 @@ class TagGraph(object):
         subgraph = self.graph.subgraph(tags)
 
         # make into matrix and remove self edges
-        data = np.array(nx.to_numpy_matrix(subgraph, weight='fuzzylogic'))
-        data += data.T
+        data = np.array(nx.to_numpy_matrix(subgraph, weight='count'))
+        #data += data.T
         size = data.shape[0]
         for step in range(size):
             data[step, step] = 0
@@ -538,7 +538,6 @@ class TagGraph(object):
             remove_vision_tags=remove_vision_tags)
         
         n = self.graph.number_of_nodes()
-        print("already have %s nodes in the graph"%n)
 
         # add all the tags as nodes, then remove those that are rare. keep
         # only those that are common
@@ -546,6 +545,7 @@ class TagGraph(object):
         _remove_rare_tags()
         _most_popular_tags()
         remaining_nodes = set(self.graph.nodes())
+        print('%s remaining nodes'%len(remaining_nodes))
 
         # now add edges, and remove those that are rare
         _add_edges()
@@ -594,12 +594,18 @@ class TagMatrix(object):
         self.jaccard = to_matrix('jaccard')
         self.counts = to_matrix('count')
         
-    def eigenvalues(self, component='counts'):
+    def eigenvalues(self, component='counts', power=1):
         """ Calculate the normalized graph laplacian for a matrix component,
         and from the laplacian the eigenvalues """
         
         from scipy import linalg
         data = eval('self.%s'%component)
+        
+        if component == 'jaccard':
+            assert isinstance(power,(int,float)), "power must be number"
+        
+        data = data**power
+        
         dmatrix = 1.*np.eye(data.shape[0], dtype=np.int)*np.sum(data, axis=0)
         dmatrix2 = 1.*np.eye(data.shape[0], dtype=np.int)
         dmatrix2 *= 1./np.sqrt(np.sum(data, axis=0))
@@ -609,7 +615,8 @@ class TagMatrix(object):
         # from the symmetric laplacian lsym, calculate the eigenvalues
         eigs = np.abs(linalg.eigvals(laplace_sym).real)
         eigs.sort()
-        
+
+        w, v = linalg.eig(laplace_sym)
         self.eigs = eigs
         
     def svd_reduce(self, components=None):
