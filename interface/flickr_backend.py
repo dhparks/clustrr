@@ -24,7 +24,7 @@ class Backend(object):
     """ This class defines an api that the gui can talk to through the browser,
     interfacing between the browser commands and the database commands
     in tag_classes and the analytical routines in som_classes.
-   
+    
     Most functions in this class get called in an indirect fashion.
     The server file calls backend.cmds[cmd](*args). Cmds is a dictionary
     linking browswer command requests to functions in this class. """
@@ -68,8 +68,8 @@ class Backend(object):
         self.file_id = 'user_%s maxdate_*'
         
         # special switches for looking at photos in explore
-        self.popular_tags = 200
-        self.remove_vision_tags = False
+        self.popular_tags = 400
+        self.remove_vision_tags = True
         
     def get_uid(self, url):
         """ Get the user id from the flickr url of form
@@ -105,6 +105,15 @@ class Backend(object):
         except OSError:
             pass
         
+    def special_name_test(self):
+        """ Set special values for doing basic  testing using
+        data with a known structure """
+        
+        self.nsid = 'color_test'
+        self.uname = 'color_test'
+        self.db_path = 'SKIP'
+        self.popular_tags = -1
+        
     def connect(self, nsid=None):
         """ Switch the database being interrogated or populated
         by this instance of the backend. The optional parameter
@@ -117,16 +126,18 @@ class Backend(object):
         if nsid != None:
             self.nsid = nsid
         
-        # first, close the currently open database
-        try:
-            self.cloud.database.close()
-        except (NameError, AttributeError):
-            pass
+        if self.nsid != 'color_test':
         
-        # connect or create using the usual tag schema.
-        # see tag_classes.TagCloud for details
-        self.cloud.connect(os.path.join(self.db_path, '%s.db'%self.nsid))
-        self.cloud.add_tables()
+            # first, close the currently open database
+            try:
+                self.cloud.database.close()
+            except (NameError, AttributeError):
+                pass
+            
+            # connect or create using the usual tag schema.
+            # see tag_classes.TagCloud for details
+            self.cloud.connect(os.path.join(self.db_path, '%s.db'%self.nsid))
+            self.cloud.add_tables()
        
     def populate_explore(self):
         """ Fill the database with photos from Flickr's EXPLORE """
@@ -163,7 +174,7 @@ class Backend(object):
         the user's photos. """
 
         # skip querying flickr
-        if not DEBUG:
+        if not DEBUG and self.nsid != 'color_test':
     
             # get a stop date for the photos
             max_date = self.cloud.date_min_max()[1]
@@ -179,7 +190,7 @@ class Backend(object):
                                                       fields=fields,
                                                       extras=extras,
                                                       stop_date=max_date)
-
+                    
                     self.cloud.add_photos(photos)
                     
                     # remove old analysis
@@ -250,6 +261,8 @@ class Backend(object):
             # special names:
             if name == '$explore':
                 self.special_name_explore()
+            elif name == '$test':
+                self.special_name_test()
             else:
                 self.get_uid('http://flickr.com/photos/%s'%form['name'])
                 
@@ -273,6 +286,8 @@ class Backend(object):
         try:
             if self.uname == 'explore':
                 self.populate_explore()
+            elif self.uname == 'color_test':
+                pass
             else:
                 self.populate()
         except fh.FlickrError as err:
@@ -305,6 +320,9 @@ class Backend(object):
                     self.centralities = j.load(where)
                 except:
                     _calculate(fpath)
+                    
+        if self.nsid == 'color_test':
+            return self.success
                 
         try:
             fmt = 'centralities %s.json'%self.file_id
@@ -344,19 +362,61 @@ class Backend(object):
             """ Do things afterwards helper """
             self.matrix.source = self.graph
             self.matrix.make_matrix()
+            
+        def _make_test_data(n_clusters=8, n_samples=200, r=0.05):
+            """ Matrix for testing known data structure """
+            # need to make an affinity matrix here.
+            # needs to be named self.matrix.fuzzy
+            # and self.matrix.counts
 
-        #try:
-        fmt = 'graph user_%s maxdate_*.pck'
-        self._load_old(fmt, _load, _calculate, after=_after)
-        return self.success
-        #except:
-        #    return self.fail
+            assert n_samples%n_clusters == 0
+            z = n_samples/n_clusters
+            d = lambda: np.random.normal(0, r, (z, 3))
+            
+            # make the rgb vectors
+            from colorsys import hls_to_rgb as convert
+            tmp = np.linspace(0, 1, n_clusters+1)
+            centers = [convert(x, 0.5, 1) for x in tmp[:-1]]
+            samples = np.vstack([np.array(c)+d() for c in centers])
+            samples = np.clip(samples, 0, 1, samples)
+            samples = np.random.permutation(samples)
+            
+            # make the affinity matrix
+            tmp = np.zeros((n_samples, n_samples), np.float32)
+            for n in range(samples.shape[0]):
+                d0 = samples[n]
+                
+                for m in range(samples.shape[0]-n-1):
+                    m2 = m+1+n
+                    d1 = samples[m2]
+                    v = np.sum((d1-d0)**2)
+                    tmp[n, m2] = v
+    
+            tmp += tmp.T
+            tmp = np.exp(-6*tmp)
+            
+            self.matrix.fuzzy = tmp
+            self.matrix.counts = tmp
+            self.graph = None
+
+        if self.nsid == 'color_test':
+            _make_test_data()
+            return self.success
+            
+        else:
+    
+            try:
+                fmt = 'graph user_%s maxdate_*.pck'
+                self._load_old(fmt, _load, _calculate, after=_after)
+                return self.success
+            except:
+                return self.fail
 
     def _eigenvalues(self, args, json, form):
         """ Calculate eigenvalues of the counts matrix for cluster
         size determination."""
         try:
-            self.matrix.eigenvalues(component='counts')
+            stuff = self.matrix.eigenvalues(component='counts', power=1)
             return self.success
         except:
             return self.fail
@@ -374,7 +434,7 @@ class Backend(object):
             
             self.som.graph = self.graph
             self.som.train(training_set, training_set.shape[0]*5,
-                           repeats=32, debug=False)
+                           repeats=28, debug=False)
             np.savez_compressed(fname, data=self.som.repeats)
 
         def _load(fname):
@@ -382,6 +442,10 @@ class Backend(object):
             self.som.repeats = np.load(fname)['data']
             self.som.samples = self.matrix.fuzzy
             self.som.iterations = self.matrix.fuzzy.shape[0]*5
+
+        if self.nsid == 'color_test':
+            _calculate('testing_data.npz')
+            return self.success
 
         try:
             fmt = 'repeat user_%s maxdate_*.npz'
@@ -445,28 +509,35 @@ class Backend(object):
             with open(fname, 'r') as where:
                 self.cluster_members = j.load(where)
 
+        if self.nsid == 'color_test':
+            fi = self.file_id.replace('*','None')
+            _calculate1('reproduction %s.json'%fi)
+            _calculate2('assignments %s.json'%fi)
+            _calculate3('clustermembers %s.json'%fi)
+            return self.success
 
-        #try:
-        sequence = [{'fmt':'reproduction %s.json'%self.file_id,
-                     'load':_load1,
-                     'calc':_calculate1},
 
-                    {'fmt':'assignments %s.json'%self.file_id,
-                     'load':_load2,
-                     'calc':_calculate2},
-
-                    {'fmt':'clustermembers %s.json'%self.file_id,
-                     'load':_load3,
-                     'calc':_calculate3},
-                   ]
-        
-        for seq in sequence:
-            self._load_old(seq['fmt'], seq['load'], seq['calc'])
+        try:
+            sequence = [{'fmt':'reproduction %s.json'%self.file_id,
+                         'load':_load1,
+                         'calc':_calculate1},
+    
+                        {'fmt':'assignments %s.json'%self.file_id,
+                         'load':_load2,
+                         'calc':_calculate2},
+    
+                        {'fmt':'clustermembers %s.json'%self.file_id,
+                         'load':_load3,
+                         'calc':_calculate3},
+                       ]
             
-        return self.success
+            for seq in sequence:
+                self._load_old(seq['fmt'], seq['load'], seq['calc'])
+                
+            return self.success
         
-        #except:
-        #    return self.fail
+        except:
+            return self.fail
     
     def _download(self, args, json_in, form):
         
@@ -491,29 +562,52 @@ class Backend(object):
             
             # for the spectral graph, we need to convert to png
             # and supply the url, as well as the number of tags (for scaling)
-            max_date = self.cloud.date_min_max()[1]
+            if self.nsid != 'color_test':
+                max_date = self.cloud.date_min_max()[1]
+            else:
+                max_date = 'None'
             sizes = [s['sizes'] for s in self.som.reproduction_analysis]
             png_name = 'static/images/clusters_%s_%s.png'%(self.uname, max_date)
             to_return['blockdiagonal'] = sizes
             to_return['blockdiagonalurl'] = png_name
-            to_return['ntags'] = self.graph.graph.number_of_nodes()
+            
+            if self.nsid == 'color_test':
+                to_return['ntags'] = 200
+            else:
+                to_return['ntags'] = self.graph.graph.number_of_nodes()
             self._to_sprite(self.som.reproduction_matrices, png_name)
             
             # stuff for the word cloud
-            to_return['tags'] = sorted(self.graph.graph.nodes())
             to_return['members'] = self.cluster_members #11k zipped
-            to_return['centralities'] = self.centralities #21k zipped
             
-            counts, max_counts = self.graph.get_counts(tags=to_return['tags'])
-            to_return['counts'] = counts
-            to_return['maxCounts'] = max_counts
+            if self.nsid != 'color_test':
+                to_return['tags'] = sorted(self.graph.graph.nodes())
+                to_return['centralities'] = self.centralities #21k zipped
+            
+                counts, max_counts = self.graph.get_counts(tags=to_return['tags'])
+                to_return['counts'] = counts
+                to_return['maxCounts'] = max_counts
+                
+            else:
+                to_return['tags'] = None
+                to_return['centralities'] = None
+            
+                counts, max_counts = None, None
+                to_return['counts'] = counts
+                to_return['maxCounts'] = max_counts
             
             # stuff for generating image thumbnails from the wordcloud.
             # need: list of photos each popular tag belong to.
-            reverse_table = self.cloud.reverse_table(self.graph.graph.nodes())
-            to_return['tagsToPhotos'] = reverse_table['tags_to_photos']
-            to_return['photosToThumbs'] = reverse_table['photos_to_thumbs']
-            to_return['photosToLinks'] = reverse_table['photos_to_links']
+            if self.nsid != 'color_test':
+                reverse_table = self.cloud.reverse_table(self.graph.graph.nodes())
+                to_return['tagsToPhotos'] = reverse_table['tags_to_photos']
+                to_return['photosToThumbs'] = reverse_table['photos_to_thumbs']
+                to_return['photosToLinks'] = reverse_table['photos_to_links']
+                
+            else:
+                to_return['tagsToPhotos'] = None
+                to_return['photosToThumbs'] = None
+                to_return['photosToLinks'] = None
 
             return to_return
             
