@@ -123,7 +123,9 @@ The JSON returned from Flickr's database in response to a query to the
 each photo in three fields: tags, title, and description.
 Content in all three fields undergoes basic munging to remove troublesome
 characters, including html tags and special characters which can ultimately
-interfere with the HTML or SVG DOM of the webapp's interface.
+interfere with the HTML or SVG DOM of the webapp's interface (for example, 
+a hashtag uses the '#' symbol which can cause trouble for the javascript selector
+mechanism).
 <p></p>	
 Following parsing and munging, Clustrr inserts the returned information
 regarding each photo into a <a href="http://sqlite.org">SQLite</a> database with fast text search capability
